@@ -1,0 +1,431 @@
+---
+title: "Creating function"
+format: html
+editor: visual
+---
+
+```{r}
+knitr::opts_chunk$set(warning = F, message = F)
+```
+
+```{r}
+library(sf)
+library(tidyverse)
+library(dplyr)
+library(janitor)
+library(ggplot2)
+library(stars)
+library(mapview)
+library(factoextra)
+library(shadowtext)
+library(purrr)
+library(furrr)
+# library(arrow)
+# lsf.str("package:arrow")
+```
+
+```{r}
+drone_clean <- function(band1, band2, boundary = NULL, df = NULL, clustering = NULL, n_clust = NULL, vis_cluster = NULL,  plot_agg = NULL,  plant = NULL, vis_plot_agg = NULL, trt_info = NULL){
+  
+  if(vis_cluster == F & df == T & plot_agg == F & clustering == F & vis_plot_agg == F){
+    
+    if(is.null(boundary)){
+      "Error: boundary of a field is required as sf."
+    }
+    
+    vi <- ((band1- band2)/(band1 + band2)) %>% 
+    st_warp(crs = st_crs(boundary)) %>% 
+    st_crop(boundary) %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    mutate(scaled_vi = scale(.[,1]),
+           ndre = .[,1]*1)
+    
+    return(vi)
+  }
+  
+  if(vis_cluster == F & df == F & plot_agg == F & clustering == T & vis_plot_agg == F){
+    
+    if(is.null(n_clust)){
+      stop("Error: Please specify the number of cluster you want.")
+    }
+    
+    vi <- ((band1- band2)/(band1 + band2)) %>% 
+    st_warp(crs = st_crs(boundary)) %>% 
+    st_crop(boundary) %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    mutate(scaled_vi = scale(.[,1]),
+           ndre = .[,1]*1)
+    
+    set.seed(123)
+    clustering <- kmeans(vi$scaled_vi, centers = n_clust, nstart = 25, iter.max = 10, algorithm = "MacQueen")
+    
+    with_cluster <- cbind(vi, clusters = clustering$cluster)
+    
+    return(with_cluster)
+  }
+    
+  if(vis_cluster == T & df == F & plot_agg == F & clustering == T & vis_plot_agg == F){
+    
+    if(is.null(n_clust)){
+      stop("Error: Please specify the number of cluster you want.")
+    }
+    
+    vi <- ((band1- band2)/(band1 + band2)) %>% 
+    st_warp(crs = st_crs(boundary)) %>% 
+    st_crop(boundary) %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    mutate(scaled_vi = scale(.[,1]),
+           ndre = .[,1]*1)
+    
+    set.seed(123)
+    clustering <- kmeans(vi$scaled_vi, centers = n_clust, nstart = 25, iter.max = 5, algorithm = "MacQueen")
+    
+    with_cluster <- cbind(vi, clusters = clustering$cluster)
+    
+    as_stars <- with_cluster %>% 
+      st_as_sf() %>% 
+      st_as_stars()
+    
+    plot <- ggplot()+
+      geom_stars(data = as_stars, aes(fill = factor(clusters)))+
+      scale_fill_viridis_d()
+   
+    return(plot) 
+
+  }
+  
+  if(vis_cluster == F & df == F & plot_agg == T & clustering == F & vis_plot_agg == F){
+    
+    if(is.null(n_clust)){
+      stop("Error: Please specify the number of cluster you want.")
+    }
+    
+    if(is.null(plant)){
+      stop("Error: 'plant' argument is missing. Please provide a value for plant pixels.")
+    }
+    
+    if(is.null(trt_info)){
+      stop("Error: 'trt_info' argument is missing. Please provide a value for your experiment info file that has treatment, plots.")
+    }
+    
+    vi <- ((band1- band2)/(band1 + band2)) %>% 
+    st_warp(crs = st_crs(boundary)) %>% 
+    st_crop(boundary) %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    mutate(scaled_vi = scale(.[,1]),
+           ndre = .[,1]*1)
+    
+    set.seed(123)
+    clustering <- kmeans(vi$scaled_vi, centers = n_clust, nstart = 25, iter.max = 10, algorithm = "MacQueen")
+    
+    with_cluster <- cbind(vi, clusters = clustering$cluster)
+    
+    filtered <- with_cluster %>% 
+      filter(clusters %in% c(plant)) %>% 
+      st_as_sf() %>% 
+      st_as_stars() %>% 
+      st_transform(crs = 6345)
+    
+    aggregrated <- aggregate(filtered, boundary, FUN = mean) %>% 
+      st_as_sf()
+    
+    merged_df <- st_join(boundary, aggregrated, join = st_nearest_feature, left = T)
+    
+    return(merged_df)
+  }
+  
+  if(vis_cluster == F & df == F & plot_agg == T & clustering == F & vis_plot_agg == T){
+    
+    if(is.null(n_clust)){
+      stop("Error: Please specify the number of cluster you want.")
+    }
+    
+    if(is.null(plant)){
+      stop("Error: 'plant' argument is missing. Please provide a value for plant pixels.")
+    }
+    
+    if(is.null(trt_info)){
+      stop("Error: 'trt_info' argument is missing. Please provide a value for your experiment info file that has treatment, plots.")
+    }
+    
+    veg_ind <- ((band1 - band2)/(band1 + band2))
+    
+    vi <- veg_ind %>% 
+      st_warp(crs = st_crs(boundary)) %>% 
+    st_crop(boundary) %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    mutate(scaled_vi = scale(.[,1]),
+           ndre = .[,1]*1)
+    
+    set.seed(123)
+    clustering <- kmeans(vi$scaled_vi, centers = n_clust, nstart = 25, iter.max = 10, algorithm = "MacQueen")
+    
+    with_cluster <- cbind(vi, clusters = clustering$cluster)
+    
+    filtered <- with_cluster %>% 
+      filter(clusters %in% c(plant)) %>% 
+      st_as_sf() %>% 
+      st_as_stars()
+    
+    aggregrated <- aggregate(filtered, boundary, FUN = mean) %>% 
+      st_as_sf()
+    
+    merged_df <- st_join(boundary, aggregrated, join = st_nearest_feature, left = T)
+    
+    plot_final <- merged_df %>% 
+  merge(trt_info, by = "Plots") %>% 
+  mutate(center = st_centroid(geometry),
+         x = unlist(map(center, 1)),
+         y = unlist(map(center, 2))) %>% 
+  ggplot()+
+  geom_sf(data = merged_df, aes(fill = ndre))+
+  scale_fill_viridis_c()+
+  geom_shadowtext(aes(label = paste(as.character(Plots), treatment, sep = "\n"), y = y, x = x), size = 3, color = "white", bg = "black")
+  
+    return(plot_final)
+  }
+}
+```
+
+```{r}
+mid <- read_sf("../data/mid_07_14_2rows_cc/mid_07_14_2rows.shp") %>% 
+  st_transform(crs = 6345) %>% 
+  rename(Plots = Plot) %>% 
+  arrange(Plots)
+
+nir <- read_stars("../data/mid_07_14_nir.tif")
+
+
+re <- read_stars("../data/mid_07_14_re.tif") 
+
+info <- read_csv("../data/info_midville.csv") %>% 
+  rename(Plots = plot_ids)
+
+plot(nir)
+```
+
+```{r}
+# If you want to do clustering and visualize the clusters then, clustering and vis_cluster should be True and you have to specify the number of clusters.
+
+cluster_img <- drone_clean(nir, re, mid, 
+                           vis_cluster = T, 
+                           df = F, 
+                           n_clust = 4,    
+                           clustering = T, 
+                           plot_agg = F,
+                           trt_info = info, 
+                           vis_plot_agg = F)
+```
+
+```{r}
+# If df = T, that means you need a dataframe, so the function will calculate the VI based on the bands your give and return a dataframe.
+
+drone_clean(nir, re, mid, 
+            vis_cluster = F,
+            df = T,
+            clustering = F,
+            plot_agg = F, 
+            vis_plot_agg = F)
+```
+
+```{r warning = FALSE}
+# Next if you want to perform clustering then you can do clustering = T and specify the number of clusters.
+
+drone_clean(nir, re, mid, 
+            clustering = T,
+            n_clust = 5,
+            vis_cluster = F, 
+            df = F, 
+            plot_agg = F, 
+            vis_plot_agg = F)
+```
+
+```{r warning = FALSE}
+# Next if you want the averaged output of your plots, then you need to provide the trt_info,,which is the treatment file of your research and make sure there is a plot column with name - Plots
+
+(mid_07_07_forcc <- drone_clean(nir, re, mid, 
+            vis_cluster = F, 
+            df = F, 
+            clustering = F, 
+            plot_agg = T,
+            vis_plot_agg = T, 
+            plant = c(3,4), 
+            trt_info = info))
+
+# write_csv(mid_07_07_forcc, "../../Sensors comparision/data/mid_07_07_forcc.csv")
+```
+
+```{r}
+nir_07_14 <- read_stars("../data/nir_tiles/mid_07_14.tif")
+
+re_07_14 <- read_stars("../data/re tiles/07_14_mid_noalpha_reflectance_red edge_1_1.tif")
+
+mid_07_14_2rows <- read_sf("../data/2 rows shape file/mid_07_14_2rows_cc/mid_07_14_2rows.shp") %>% 
+  st_transform(crs = 6345) %>% 
+  rename(Plots = Plot)
+
+ggplot()+
+  geom_sf(data = mid_07_14_2rows)
+```
+
+```{r}
+(cluster_img_07_14 <- drone_clean(nir_07_14, re_07_14, mid_07_14_2rows, 
+                                 vis_cluster = T, 
+                                 df = F, 
+                                 plot_agg = F, 
+                                 clustering = T, 
+                                 trt_info = info, 
+                                 vis_plot_agg = F))
+
+```
+
+```{r, warning=FALSE}
+ms_07_12 <- drone_clean(nir_07_14, re_07_14, mid_07_14_2rows, 
+            vis_cluster = F, 
+            df = F, 
+            plot_agg = T, 
+            clustering = F, 
+            vis_plot_agg = F,
+            plant = c(1,3,4,5), 
+            trt_info = info)
+
+# write_sf(ms_07_12, "../../Sensors comparision/data/ms_07_12plantsoil.geojson")
+
+```
+
+```{r}
+# read_csv("../../Sensors comparision/data/ms data plot avg/ms_07_12.csv")
+
+ms_07_12_p <- drone_clean(nir_07_14, re_07_14, mid_07_14_2rows, 
+            vis_cluster = F, 
+            df = F, 
+            plot_agg = T, 
+            clustering = F, 
+            vis_plot_agg = F, 
+            plant = c(3,4), 
+            trt_info = info)
+
+# write_csv(ms_07_12, "../../Sensors comparision/data/ms_07_12_plantsonly.csv")
+```
+
+```{r}
+drone_clean(nir_07_14, re_07_14, mid_07_14_2rows, 
+            vis_cluster = F, 
+            df = F, 
+            plot_agg = T, 
+            clustering = F, 
+            vis_plot_agg = T, 
+            plant = c(1,2,3), 
+            trt_info = info)
+```
+
+```{r}
+nir_07_26 <- read_stars("../data/nir_tiles/mid_07_26_noalpha_reflectance_nir_1_1.tif") 
+
+re_07_26 <- read_stars("../data/re tiles/mid_07_26_noalpha_reflectance_red edge_1_1.tif")
+
+mid_2rows <- read_sf("../data/2 rows shape file/mid_07_26_2rows_cc/mid_07_26_2rows_cc.shp") %>% 
+  st_transform(crs = 6345) %>% 
+  rename(Plots = Plot)
+
+```
+
+```{r}
+cluster_img_07_26 <- drone_clean(nir_07_26, re_07_26, mid_2rows, 
+                                 vis_cluster = T, 
+                                 df = F, 
+                                 plot_agg = F, 
+                                 clustering = T, 
+                                 trt_info = info, 
+                                 vis_plot_agg = F)
+```
+
+```{r}
+mid_07_26_forcc <- drone_clean(nir_07_26, re_07_26, mid_2rows, 
+            vis_cluster = F, 
+            df = F, 
+            plot_agg = T, 
+            clustering = F, 
+            vis_plot_agg = F, 
+            plant = c(1,2,3), 
+            trt_info = info)
+
+# write_csv <- write_csv(mid_07_26_forcc,
+#                        "../../Sensors comparision/data/mid_07_26_forcc.csv")
+```
+
+```{r}
+drone_clean(nir_07_26, re_07_26, mid_2rows, 
+            vis_cluster = F, 
+            df = F, 
+            plot_agg = T, 
+            clustering = F, 
+            vis_plot_agg = T,
+            plant = c(1,2,3,4),
+            trt_info = info)
+```
+
+```{r}
+nir_08_03 <- read_stars("../data/tiles_08_03/08_03_mid_noalpha_reflectance_nir_1_1.tif") 
+
+re_08_03 <- read_stars("../data/tiles_08_03/08_03_mid_noalpha_reflectance_red edge_1_1.tif")
+
+mid_08_03 <- read_sf("../data/2 rows shape file/mid_08_03_2rows_cc/mid_08_02_2rows_forcc.shp") %>% 
+  st_transform(crs = 6345)
+```
+
+```{r}
+drone_clean(nir_08_03, re_08_03, mid_08_03
+            ,vis_cluster = F, df = T, plot_agg = F
+            ,clustering = F, vis_plot_agg = F)
+```
+
+```{r}
+drone_clean(nir_08_03, re_08_03, mid_08_03
+            ,vis_cluster = T, df = F, plot_agg = F
+            ,clustering = T, vis_plot_agg = F)
+```
+
+```{r}
+ms_08_03_forcc <- drone_clean(nir_08_03, re_08_03, mid_08_03
+            ,vis_cluster = F, df = F, plot_agg = T
+            ,clustering = F, vis_plot_agg = F, plant = c(1,2,3), trt_info = info)
+
+# write_csv(ms_08_03_forcc,
+#           "../../Sensors comparision/data/ms data plot avg/ms_08_03_forcc.csv")
+```
+
+```{r}
+nir_08_28 <- read_stars("../data/tiles_08_28/08_28_mid_noalpha_reflectance_nir_1_1.tif") 
+
+re_08_28 <- read_stars("../data/tiles_08_28/08_28_mid_noalpha_reflectance_red edge_1_1.tif")
+
+mid_08_28 <- read_sf("../data/2 rows shape file/mid_08_26_2rows_forcc/mid_08_26_2rows_cc.shp") %>% 
+  st_transform(crs = 6345)
+```
+
+```{r}
+drone_clean(nir_08_28, re_08_28, mid_08_28
+            ,vis_cluster = F, df = T, plot_agg = F
+            ,clustering = F, vis_plot_agg = F)
+```
+
+```{r}
+drone_clean(nir_08_28, re_08_28, mid_08_28
+            ,vis_cluster = T, df = F, plot_agg = F
+            ,clustering = T, vis_plot_agg = F)
+```
+
+```{r}
+ms_08_28_forcc <- drone_clean(nir_08_28, re_08_28, mid_08_28
+            ,vis_cluster = F, df = F, plot_agg = T
+            ,clustering = F, vis_plot_agg = F, plant = c(2,3,4), trt_info = info)
+
+# write_csv(ms_08_28_forcc,
+#           "../../Sensors comparision/data/ms data plot avg/ms_08_28_forcc.csv")
+```

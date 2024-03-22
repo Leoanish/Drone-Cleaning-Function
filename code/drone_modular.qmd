@@ -1,0 +1,145 @@
+---
+title: "drone cleaning modular"
+format: html
+editor: visual
+---
+
+```{r}
+library(sf)
+library(tidyverse)
+library(dplyr)
+library(janitor)
+library(ggplot2)
+library(stars)
+library(mapview)
+library(factoextra)
+library(shadowtext)
+library(purrr)
+library(furrr)
+# library(arrow)
+# lsf.str("package:arrow")
+```
+
+```{r}
+vi_calc <- function(band1, band2, field_bound = NULL){
+  if (!inherits(band1, "stars") || !inherits(band2, "stars") || !inherits(field_bound, "sf")) {
+    stop("Error: 'band1' and 'band2' must be stars objects and field bound must be a sf object.")
+  }
+  
+  vi <- ((band1- band2)/(band1 + band2)) %>% 
+    st_warp(crs = st_crs(field_bound)) %>% 
+    st_crop(field_bound) %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    mutate(scaled_vi = scale(.[,1]),
+           vi = .[,1]*1) %>% 
+    dplyr::select(geometry, vi, scaled_vi)
+    
+    return(vi)
+}
+```
+
+```{r}
+nir_07_14 <- read_stars("../data/nir_tiles/07_14_mid_noalpha_reflectance_nir_1_1.tif")
+
+re_07_14 <- read_stars("../data/re tiles/07_14_mid_noalpha_reflectance_red edge_1_1.tif")
+
+mid <- read_sf("../data/plot shape file/midville.shp") %>% 
+  st_transform(crs = 6345)
+
+info <- read_csv("../data/info_midville.csv") %>% 
+  rename(Plots = plot_ids)
+```
+
+```{r}
+vi_calc(nir_07_14, re_07_14, mid)
+```
+
+```{r}
+diff_pixels <- function(df, vis = F){
+  
+  set.seed(123)
+    clustering <- kmeans(df$scaled_vi, centers = 4, nstart = 25, iter.max = 10, algorithm = "MacQueen")
+    
+    with_cluster <- cbind(df, clusters = clustering$cluster) 
+  
+  if(vis == F){
+    
+    return(with_cluster)
+  }
+  
+  if (vis == T){
+    as_stars <- with_cluster %>% 
+      st_as_sf() %>% 
+      st_as_stars()
+    
+    plot <- ggplot()+
+      geom_stars(data = as_stars, aes(fill = factor(clusters)))+
+      scale_fill_viridis_d()
+   
+    return(plot)
+    
+  }
+  
+}
+```
+
+```{r}
+vi_calc(nir_07_14, re_07_14, mid) %>% 
+  diff_pixels(vis = T)
+```
+
+```{r}
+plot_agg <- function(df, field_bound = NULL, plants = NULL){
+
+    filtered <- df %>% 
+    st_as_sf() %>% 
+    as.data.frame() %>% 
+    filter(clusters %in% c(plants)) %>% 
+    st_as_sf() %>% 
+    st_as_stars()
+    
+    aggregated <- aggregate(filtered, field_bound, FUN = mean) %>% 
+    st_as_sf()
+  
+  merged_df <- st_join(field_bound, aggregated, join = st_nearest_feature, left = T)
+  
+  return(merged_df)
+  
+}
+```
+
+```{r}
+vi_calc(nir_07_14, re_07_14, mid) %>% 
+  diff_pixels(vis = F) %>% 
+  whole_agg(field_bound = mid, plants = c(1,2))
+```
+
+```{r}
+viz_plot_agg <- function(df, trt_info, stitch_by = NULL){
+  
+  if(is_null(trt_info)){
+    stop("Provide your treatment info that has plots column in it.")
+  }
+  
+  plot_final <- df %>% 
+  merge(trt_info, by = stitch_by) %>% 
+  mutate(center = st_centroid(geometry),
+         x = unlist(map(center, 1)),
+         y = unlist(map(center, 2))) %>% 
+  ggplot()+
+  geom_sf(data = df, aes(fill = vi))+
+  scale_fill_viridis_c()+
+  geom_shadowtext(aes(label = paste(as.character(Plots), treatment, sep = "\n"), y = y, x = x), size = 3, color = "white", bg = "black")
+  
+    return(plot_final)
+}
+```
+
+```{r}
+vi_calc(nir_07_14, re_07_14, mid) %>% 
+  diff_pixels(vis = F) %>% 
+  plot_agg(field_bound = mid, plants = c(1,2)) #%>% 
+  viz_plot_agg(trt_info = info, stitch_by = "Plots")+
+  labs(fill = "NDRE")
+```
